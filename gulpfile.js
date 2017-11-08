@@ -5,7 +5,7 @@ var babel = require('gulp-babel');
 var path = require('path');
 
 var paths = {
-    es6: ['src/**/*.es6'],
+    es6: ['src/**/*.es6', 'src/**/*.js'],
     es5: 'lib',
     // Must be absolute or relative to source map
     sourceRoot: path.join(__dirname, 'src'),

@@ -1,3 +1,5 @@
+///<reference path="./validator.d.ts" />
+
 let specification = require('../data/aws_resources_specification.json');
 let resourceRefOverride = require('../data/aws_resource_ref_types.json');
 
@@ -27,6 +29,7 @@ function getPropertyType(type){
  * @param type object or null
  */
 function getType(type){
+    console.dir({getType: type});
     if(isPropertyTypeFormat(type)){
         return getPropertyType(type);
     }else{
@@ -97,7 +100,13 @@ function isArnProperty(propertyName){
     return (propertyName.indexOf('Arn') != -1);
 }
 
+/**
+ * @param {string} parentPropertyType 
+ * @param {string} propertyName 
+ */
 function isSinglePrimitivePropertyType(parentPropertyType, propertyName){
+
+    console.dir({parentPropertyType, propertyName});
     // Check if the parentPropertyType exists
     let spec = getType(parentPropertyType);
     if(spec === null){
@@ -114,6 +123,9 @@ function isSinglePrimitivePropertyType(parentPropertyType, propertyName){
     }
 }
 
+/**
+ * @param {string} resourceType 
+ */
 function isAdditionalPropertiesEnabled(resourceType){
     let spec = getType(resourceType);
     return (spec.hasOwnProperty('AdditionalProperties') && spec['AdditionalProperties'] === true)
@@ -121,6 +133,7 @@ function isAdditionalPropertiesEnabled(resourceType){
 
 function isPropertyTypeList(parentPropertyType, key){
     // Get the type
+    console.dir({parentPropertyType, key});
     let spec = getType(parentPropertyType);
     // Check if Type == List
     return (spec !== null && spec['Properties'][key].hasOwnProperty('Type') && spec['Properties'][key]['Type'] == "List");
@@ -201,3 +214,72 @@ exports.getPrimitiveItemType = getPrimitiveItemType;
 exports.hasPrimitiveItemType = hasPrimitiveItemType;
 exports.getRequiredProperties = getRequiredProperties;
 exports.isAdditionalPropertiesEnabled = isAdditionalPropertiesEnabled;
+
+
+/**
+ * @param {NamedProperty} objectType 
+ * @returns {PrimitiveType | PropertyType }
+ */
+function getItemType(objectType) {
+    const maybePrimitiveType = hasPrimitiveItemType(objectType.parentType, objectType.propertyName)
+    if (maybePrimitiveType) {
+        return {
+            type: 'PRIMITIVE_TYPE',
+            primitiveType: maybePrimitiveType,
+            resourceType: objectType.resourceType
+        }
+    } else {
+        const propertyType = getPropertyTypeApi(objectType.resourceType, objectType.parentType, objectType.propertyName);
+        return {
+            type: 'PROPERTY_TYPE',
+            propertyType: propertyType,
+            resourceType: objectType.resourceType
+        }
+    }
+}
+
+exports.getItemType = getItemType;
+
+/**
+ * 
+ * @param {NamedProperty | PrimitiveType} objectType 
+ */
+function isPropertySchema(objectType) {
+    if (objectType.type === 'PRIMITIVE_TYPE') {
+        return false;
+    } else {
+        return !(isSinglePrimitivePropertyType(objectType.parentType, objectType.propertyName));
+    }
+}
+
+exports.isPropertySchema = isPropertySchema;
+exports.isListSchema = wrapCheck(isPropertyTypeList);
+exports.isMapSchema = wrapCheck(isPropertyTypeMap);
+
+exports.isArn = wrapCheck(isArnProperty);
+
+/**
+ * 
+ * @param {(propertyType: string) => boolean} f
+ * @template T
+ */
+function wrapCheck(f) {
+    /**
+     * 
+     * @param {NamedProperty | PrimitiveType} objectType 
+     */
+    function wrapped(objectType) {
+        const propertyType = (objectType.type === 'PRIMITIVE_TYPE')
+            ? objectType.primitiveType
+            : isSinglePrimitivePropertyType(objectType.parentType, objectType.propertyName);
+
+        return f(propertyType);
+    }
+
+    return wrapped;
+}
+
+exports.isString = wrapCheck((propertyType) => propertyType == 'String');
+exports.isInteger = wrapCheck((propertyType) => propertyType == 'Integer');
+exports.isBoolean = wrapCheck((propertyType) => propertyType == 'Boolean');
+exports.isJson = wrapCheck((propertyType) => propertyType == 'Json');

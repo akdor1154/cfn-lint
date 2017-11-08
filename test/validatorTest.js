@@ -13,7 +13,7 @@ describe('validator', () => {
     describe('validateJsonObject', () => {
 
 
-        it('a valid (1.json) template should return an object with validTemplate = true, no crit errors', () => {
+        it.only('a valid (1.json) template should return an object with validTemplate = true, no crit errors', () => {
             const input = require('./data/valid/json/1.json');
             let result = validator.validateJsonObject(input);
             console.log(result['errors']['crit']);

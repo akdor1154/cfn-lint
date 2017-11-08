@@ -1,3 +1,5 @@
+///<reference path="./validator.d.ts" />
+
 let workingInput = null;
 let stopValidation = false;
 let errorObject = {"templateValid": true, "errors": {"info": [], "warn": [], "crit": []}};
@@ -319,6 +321,9 @@ function resolveReferences(){
 
 }
 
+/**
+ * @type {(string|number)[]}
+ */
 let placeInTemplate = [];
 let lastPositionInTemplate = null;
 let lastPositionInTemplateKey = null;
@@ -904,13 +909,7 @@ function checkResourceProperties() {
                 placeInTemplate.push('Properties');
                 let resourceType = resources[res]['Type'];
 
-                // Check for missing required properties
-                checkForMissingProperties(resources[res]['Properties'], resourceType);
-
-                // TODO How to handle optional required parameters
-
-                // Process each Property
-                checkEachProperty(resourceType, resources[res], 'Properties');
+                check({type: 'RESOURCE', resourceType}, resources[res]['Properties']);
 
                 // Remove Properties
                 placeInTemplate.pop();
@@ -924,6 +923,258 @@ function checkResourceProperties() {
     // Remove Resource
     placeInTemplate.pop();
 }
+
+/**
+ * 
+ * @param {ObjectType} objectType 
+ * @param {any} objectToCheck 
+ */
+function check(objectType, objectToCheck) {
+    console.dir({objectType});
+    // if we expect an object
+    try {
+        if ((objectType.type === 'RESOURCE') || (objectType.type === 'PROPERTY_TYPE')) {
+            verify(isObject, objectToCheck);
+            checkComplexObject(objectType, objectToCheck);
+        } else {
+            
+            if (objectType.type === 'PROPERTY') {
+                if (resourcesSpec.isPropertySchema(objectType)) {
+                    verify(isObject, objectToCheck);
+                    checkComplexObject(objectType, objectToCheck);
+                }
+                // else if we expect a list
+                else if (resourcesSpec.isListSchema(objectType)) {
+                    verify(isList, objectToCheck);
+                    checkList(objectType, objectToCheck);
+                }
+                else if (resourcesSpec.isMapSchema(objectType)) {
+                    verify(isObject, objectToCheck);
+                    checkMap(objectType, objectToCheck);
+                }
+                else if (resourcesSpec.isArn(objectType)) {
+                    verify(isString, objectToCheck);
+                    checkArn(objectToCheck);
+                }
+            }
+
+            if (resourcesSpec.isString(objectType)) {
+                verify(isString, objectToCheck);
+            }
+            else if (resourcesSpec.isInteger(objectType)) {
+                verify(isInteger, objectToCheck);
+            }
+            else if (resourcesSpec.isBoolean(objectType)) {
+                verify(isBoolean, objectToCheck);
+            }
+            else if (resourcesSpec.isJson(objectType)) {
+                verify(isJson, objectToCheck);
+            }
+            else {
+                // TODO
+                throw new Error (`TODO: unknown type ${objectType}`);
+            }
+        }
+    } catch (e) {
+        if (e.name === VerificationError.name) {
+            addError('crit', e.message+`, got ${objectToCheck}`, placeInTemplate, objectType.resourceType);
+            console.log({message: e.message, type: typeof objectToCheck, prototype: objectToCheck.prototype});
+        } else {
+            throw e;
+        }
+    }
+
+    // else if we expect a primitive
+}
+
+/**
+ * 
+ * @param {ResourceType | NamedProperty | PropertyType } objectType 
+ * @param {any} objectToCheck 
+ */
+function checkComplexObject(objectType,  objectToCheck) {
+    
+    // Check for missing required properties
+    checkForMissingProperties(objectToCheck, objectType);
+
+    const objectTypeName = getPropertyTypeName(objectType);
+
+    const isCustomPropertyAllowed = resourcesSpec.isAdditionalPropertiesEnabled(objectTypeName);
+
+
+    for (const subPropertyName in objectToCheck) {
+        const isValidProperty = resourcesSpec.isValidProperty(objectTypeName, subPropertyName);
+        if (isValidProperty) {
+            //const propertyType = resourcesSpec.getPropertyType(objectType, propertyName);
+            console.dir({objectType, subPropertyName, objectTypeName});
+            /** @type {ObjectType} */
+            const subPropertyObjectType = {
+                type: 'PROPERTY',
+                resourceType: objectType.resourceType,
+                parentType: objectTypeName,
+                propertyName: subPropertyName
+            }
+
+            check(subPropertyObjectType, objectToCheck[subPropertyName])
+        } else if (!isCustomPropertyAllowed) {
+            addError("crit", `${subPropertyName} is not a valid property of ${objectType}`, placeInTemplate, objectType);
+        }
+    }
+
+    // TODO How to handle optional required parameters
+}
+
+class VerificationError extends Error {
+    /**
+     * 
+     * @param {string} message 
+     */
+    constructor(message) {
+        super(message)
+        Error.captureStackTrace(this, VerificationError);
+        this.name = VerificationError.name;
+    }
+}
+
+/**
+ * 
+ * @param {VerificationFunction} verifyTypeFunction 
+ * @param {any} object 
+ */
+function verify(verifyTypeFunction, object) {
+    if (!verifyTypeFunction(object)) {
+        throw new VerificationError(verifyTypeFunction.failureMessage);
+    }
+}
+
+/**
+ * @type {VerificationFunction}
+ * @param {any} objectToCheck 
+ */
+function isList(objectToCheck) {
+    return (typeof objectToCheck === 'object' && objectToCheck.constructor === Array);
+}
+isList.failureMessage = `Expecting a list`;
+
+/**
+ * 
+ * @param {NamedProperty} objectType 
+ * @param {any[]} listToCheck 
+ */
+function checkList(objectType, listToCheck) {
+    const itemType = resourcesSpec.getItemType(objectType);
+    for (const [index, item] of listToCheck.entries()) {
+        placeInTemplate.push(index);
+        check(itemType, item);
+        placeInTemplate.pop();
+    }
+}
+
+
+/**
+ * @type {VerificationFunction}
+ * @param {any} objectToCheck 
+ */
+function isObject(objectToCheck) {
+    return (typeof objectToCheck === 'object' && objectToCheck.constructor === Object);
+}
+isObject.failureMessage = `Expecting an object`;
+
+
+/**
+ * 
+ * @param {NamedProperty} objectType
+ * @param {{[k: string]: any}} mapToCheck 
+ */
+function checkMap(objectType, mapToCheck) {
+    const itemType = resourcesSpec.getItemType(objectType);
+    for (let key in mapToCheck) {
+        placeInTemplate.push(key);
+        const item = mapToCheck[key];
+        check( itemType, item);
+        placeInTemplate.pop();
+    }
+}
+
+
+/**
+ * @type {VerificationFunction}
+ * @param {any} objectToCheck 
+ */
+function isString(objectToCheck) {
+    return (typeof objectToCheck === 'string');
+}
+isString.failureMessage = 'Expecting an string';
+
+
+/**
+ * @type {VerificationFunction}
+ * @param {any} objectToCheck 
+ */
+function isInteger(objectToCheck) {
+    if (typeof objectToCheck === 'number') { return true; }
+    else if (typeof objectToCheck === 'string') {
+        return /-?\d+/.test(objectToCheck);
+    }
+    else { return false; }
+}
+isInteger.failureMessage = 'Expecting an integer';
+
+
+/**
+ * @type {VerificationFunction}
+ * @param {any} objectToCheck 
+ */
+function isBoolean(objectToCheck) {
+    return (typeof objectToCheck === 'boolean');
+}
+isBoolean.failureMessage = 'Expecting a Boolean'
+
+
+/**
+ * @type {VerificationFunction}
+ * @param {any} objectToCheck 
+ */
+function isJson(objectToCheck) {
+    if (isObject(objectToCheck)) { return true; }
+    else if (typeof objectToCheck === 'string') {
+        try {
+            const o = JSON.parse(objectToCheck);
+            return isObject(o);
+        } catch (e) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+}
+isJson.failureMessage = 'Expecting a JSON object'
+
+
+/**
+ * @param {string} strToCheck 
+ */
+function checkArn(strToCheck) {
+    return strToCheck.indexOf('arn:aws') == 0;
+}
+
+/**
+ * @param {ObjectType} objectType 
+ * @returns {string}
+ */
+function getPropertyTypeName(objectType) {
+    return (objectType.type === 'RESOURCE')
+        ? objectType.resourceType
+    : (objectType.type === 'PROPERTY')
+        ? resourcesSpec.getPropertyType(objectType.resourceType, objectType.parentType, objectType.propertyName)
+    : (objectType.type === 'PROPERTY_TYPE')
+        ? objectType.propertyType
+    : (objectType.type === 'PRIMITIVE_TYPE')
+        ? objectType.primitiveType
+    : null;
+}
+
 
 function checkEachProperty(resourceType, ref, key){
     Object.keys(ref[key]).forEach((prop) => {
@@ -1012,8 +1263,15 @@ function checkResourceProperty(resourcePropType, ref, key){
 
 }
 
-function checkForMissingProperties(properties, resourceType){
-    let requiredProperties = resourcesSpec.getRequiredProperties(resourceType);
+/**
+ * 
+ * @param {any} properties 
+ * @param {ResourceType | PropertyType | NamedProperty} objectType 
+ */
+function checkForMissingProperties(properties, objectType){
+
+    const propertyType = getPropertyTypeName(objectType);
+    let requiredProperties = resourcesSpec.getRequiredProperties(propertyType);
 
     // Remove the properties we have from the required property list
     for(let prop in properties){
@@ -1028,7 +1286,7 @@ function checkForMissingProperties(properties, resourceType){
     // If we have any items left over, they have not been defined
     if(requiredProperties.length > 0){
         for(let prop of requiredProperties){
-            addError(`crit`, `Required property ${prop} missing for type ${resourceType}`, placeInTemplate, resourceType);
+            addError(`crit`, `Required property ${prop} missing for type ${propertyType}`, placeInTemplate, objectType.resourceType);
         }
     }
 }
